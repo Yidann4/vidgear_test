@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cam latency</title>
+<style>body{font:14px monospace;margin:1rem}canvas{max-width:100%;display:block;background:#000}</style>
+<canvas id="c" width="640" height="480"></canvas>
+<pre id="stats">connecting...</pre>
+<script>
+const now = () => performance.timeOrigin + performance.now();
+// Mirrors the stamps set in sender.py / relay.py: keep in sync.
+const SPANS = [
+  ["pre_send",    "capture",    "sent"],        // sender: capture -> (encode) -> just before send
+  ["netgear",     "sent",       "received"],    // NetGear send + transport (+ jpeg if enabled) + recv
+  ["encode",      "received",   "encoded"],     // relay JPEG encode (~0 in passthrough)
+  ["websocket",   "encoded",    "browser_rx"],  // relay -> browser
+  ["decode+draw", "browser_rx", "drawn"],
+  ["TOTAL",       "capture",    "drawn"],
+];
+const WINDOW = 60;
+const hist = Object.fromEntries(SPANS.map(([n]) => [n, []]));
+const arrivals = [];
+let lastSeq = null, dropped = 0;
+const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
+const out = document.getElementById("stats");
+
+const ws = new WebSocket(`ws://${location.host}/ws`);
+ws.binaryType = "arraybuffer";
+ws.onopen = () => out.textContent = "connected, waiting for frames...";
+ws.onclose = () => out.textContent = "disconnected";
+ws.onmessage = async ({ data }) => {
+  const tRx = now();
+  const hlen = new DataView(data).getUint32(0);
+  const head = JSON.parse(new TextDecoder().decode(new Uint8Array(data, 4, hlen)));
+  const bmp = await createImageBitmap(new Blob([new Uint8Array(data, 4 + hlen)], { type: "image/jpeg" }));
+  canvas.width = bmp.width; canvas.height = bmp.height;
+  ctx.drawImage(bmp, 0, 0);
+  const s = { ...head.stamps, browser_rx: tRx, drawn: now() };
+
+  if (lastSeq !== null) dropped += Math.max(0, head.seq - lastSeq - 1);
+  lastSeq = head.seq;
+  arrivals.push(tRx); if (arrivals.length > WINDOW) arrivals.shift();
+  const rows = SPANS.map(([name, a, b]) => {
+    const h = hist[name]; h.push(s[b] - s[a]); if (h.length > WINDOW) h.shift();
+    const mean = h.reduce((x, y) => x + y, 0) / h.length;
+    return `${name.padEnd(12)}${mean.toFixed(1).padStart(8)} ms${Math.max(...h).toFixed(1).padStart(9)} max`;
+  });
+  const fps = (arrivals.length - 1) / ((arrivals.at(-1) - arrivals[0]) / 1000);
+  out.textContent = rows.join("\n") + `\n\nfps ${fps.toFixed(1)}   skipped by relay ${dropped}   (mean/max of last ${WINDOW})`;
+};
+</script>

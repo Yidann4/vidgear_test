@@ -1,0 +1,32 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+
+# Testing and coverage
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+
+# IDEs (Optional but recommended)
+.vscode/
+.idea/
+.DS_Store
